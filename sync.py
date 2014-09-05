@@ -95,7 +95,6 @@ class UpdateThread(QtCore.QThread):
     updateMessage = QtCore.Signal(object)
 
     syncthing = SyncthingClient()
-    config = syncthing.get_config()
 
     def run(self):
         update = self.update_syncthing()
@@ -109,11 +108,6 @@ class UpdateThread(QtCore.QThread):
             log.info('Syncthing is up to date')
 
         return version['newer']
-
-    def download_syncthing(self, version):
-        QDesktopServices.openUrl('https://github.com/syncthing/syncthing/releases/tag/%s' % version)
-        self.update.setText('Update')
-        self.update.triggered.connect(self.update_syncthing)
 
 class RecentsThread(QtCore.QThread):
     '''
@@ -203,6 +197,12 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.update.triggered.connect(self.update_thread.start)
         self.menu.addAction(self.update)
 
+        ''' Changelog '''
+        self.changelog = QAction('View changelog', self.menu)
+        self.changelog.triggered.connect(self.view_changelog)
+        self.changelog.setVisible(False)
+        self.menu.addAction(self.changelog)
+
         ''' Restart '''
         self.restart = QAction('Restart', self.menu)
         self.restart.triggered.connect(self.restart_syncthing)
@@ -234,6 +234,9 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
 
     def open_dir(self, folder):
         QDesktopServices.openUrl('file:///%s' % folder)
+
+    def view_changelog(self):
+        QDesktopServices.openUrl('https://github.com/syncthing/syncthing/releases/latest')
 
     @QtCore.pyqtSlot()
     def handleStatusMessage(self, message):
@@ -302,8 +305,12 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         if update:
             self.update.setText('New version available!')
             self.update.triggered.connect(self.open_syncthing_web)
+            self.changelog.setVisible(True)
         else:
             self.update.setText('Up to date')
+            self.changelog.setVisible(False)
+
+        
 
     @QtCore.pyqtSlot()
     def handleRecentsMessage(self, recents):
@@ -364,7 +371,7 @@ if __name__ == '__main__':
     app.setFont('Inconsolata')
     app.setQuitOnLastWindowClosed(False)
     style = app.style()
-    # https://github.com/syncthing/syncthing/blob/master/assets/logo-512.png
+    # https://github.com/syncthing/syncthing/blob/master/assets/logo-32.png
     icon = QIcon('icons/logo-32.png')
     trayIcon = SystemTrayIcon(icon)
 
