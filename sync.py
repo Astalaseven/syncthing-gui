@@ -23,12 +23,9 @@ class StatusThread(QtCore.QThread):
     
     syncthing = SyncthingClient()
     config = syncthing.get_config()
-    
-    
-    
+
     def run(self):
         while True:
-
             repos = [repo['ID'] for repo in self.config['Repositories']]
             info_repos = self.get_repos_status(repos)
             self.infoRepoMessage.emit(info_repos)
@@ -42,7 +39,6 @@ class StatusThread(QtCore.QThread):
             time.sleep(1)
             
     def get_global_status(self, repos):
-        
         status = 0
 
         for repo in repos:
@@ -186,7 +182,6 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         nothing_yet = QAction('(nothing yet)', self.recents)
         nothing_yet.setDisabled(True)
         self.recents.addAction(nothing_yet)
-        #self.menu.hovered.connect(self.loop_print)
         self.recents.activated.connect(lambda: self.open_dir(folders[folder]))
 
         ''' Separator '''
@@ -211,12 +206,6 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.menu.addAction(self.exitAction)
         
         self.setContextMenu(self.menu)
-
-    # def loop_print(self):
-        # self.status_thread.start()
-        # while self.menu.isVisible():
-            # continue
-        # self.status_thread.stop()
 
     def open_syncthing_web(self):
         QDesktopServices.openUrl('http://localhost:8080')
@@ -310,10 +299,8 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         folders = {repo['ID']: repo['Directory'] for repo in self.config['Repositories']}
 
         if recents:
+            # remove all actions in recents menu
             self.recents.clear()
-            # for action in self.recents.actions():
-                # self.recents.removeAction(action)
-
             max_length = max([len(recent['data']['name']) for recent in recents])
 
         for recent in recents:
@@ -359,6 +346,7 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
+    # more readable with a monospace font
     # http://levien.com/type/myfonts/Inconsolata.otf
     app.setFont('Inconsolata')
     app.setQuitOnLastWindowClosed(False)
