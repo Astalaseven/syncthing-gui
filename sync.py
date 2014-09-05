@@ -26,7 +26,10 @@ requests_log = logging.getLogger('requests')
 requests_log.setLevel(logging.WARNING)
 
 class AppThread(QtCore.QThread):
-
+    '''
+    Launch syncthing executable in background.
+    Must be in same folder.
+    '''
     def run(self):
         app = 'syncthing.exe' if sys.platform == 'win32' else 'syncthing'
         psutil.Popen(app, shell=False)
@@ -234,7 +237,7 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         for proc in psutil.process_iter():
             try:
                 if proc.name() in ('syncthing', 'syncthing.exe'):
-                    proc.kill()
+                    proc.terminate()
             except psutil.AccessDenied:
                 continue
         QtGui.qApp.quit()
