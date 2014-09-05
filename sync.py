@@ -8,12 +8,13 @@ import sys
 import time
 
 import arrow
+import psutil
 from python_qt_binding import QtGui, QtCore
 from python_qt_binding.QtGui import *
 
 from syncthing import SyncthingClient
 
-# pip install arrow requests python_qt_binding PySide
+# pip install arrow requests python_qt_binding PySide psutil
 
 logging.basicConfig(filename='syncthing.log',
                     level=logging.INFO,
@@ -24,6 +25,12 @@ log = logging.getLogger(__name__)
 requests_log = logging.getLogger('requests')
 requests_log.setLevel(logging.WARNING)
 
+class AppThread(QtCore.QThread):
+
+    def run(self):
+        app = 'syncthing.exe' if sys.platform == 'win32' else 'syncthing'
+        psutil.Popen(app, shell=False)
+
 class StatusThread(QtCore.QThread):
     '''
     Thread used to update the status of SyncThing
@@ -32,10 +39,11 @@ class StatusThread(QtCore.QThread):
     statusMessage = QtCore.Signal(object)
     nodesMessage = QtCore.Signal(object)
 
-    syncthing = SyncthingClient()
-
     def run(self):
         log.info('Status thread launched')
+
+        self.syncthing = SyncthingClient()
+
         while True:
             repos = [repo['ID'] for repo in self.syncthing.get_repositories()]
             info_repos = self.get_repos_status(repos)
@@ -94,9 +102,9 @@ class UpdateThread(QtCore.QThread):
     '''
     updateMessage = QtCore.Signal(object)
 
-    syncthing = SyncthingClient()
-
     def run(self):
+        self.syncthing = SyncthingClient()
+
         update = self.update_syncthing()
         self.updateMessage.emit(update)
 
@@ -115,10 +123,10 @@ class RecentsThread(QtCore.QThread):
     '''
     recentsMessage = QtCore.Signal(object)
 
-    syncthing = SyncthingClient()
-    config = syncthing.get_config()
-
     def run(self):
+        self.syncthing = SyncthingClient()
+        self.config = self.syncthing.get_config()
+
         while True:
             events = self.syncthing.get_events()
             self.recentsMessage.emit(events)
@@ -130,12 +138,11 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
     def __init__(self, icon, parent=None):
         QtGui.QSystemTrayIcon.__init__(self, icon, parent)
 
-        self.syncthing = SyncthingClient()
-        self.config = self.syncthing.get_config()
-
-        self.menu = QtGui.QMenu(parent)
-
         ''' Threads '''
+        # App
+        self.app_thread = AppThread()
+        self.app_thread.start()
+
         # Status
         self.status_thread = StatusThread()
         self.status_thread.infoRepoMessage.connect(self.handleReposMessage)
@@ -151,6 +158,11 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.recents_thread = RecentsThread()
         self.recents_thread.recentsMessage.connect(self.handleRecentsMessage)
         self.recents_thread.start()
+
+        self.syncthing = SyncthingClient()
+        self.config = self.syncthing.get_config()
+
+        self.menu = QtGui.QMenu(parent)
 
         ''' Status '''
         self.status = QAction('Status: unknown', self.menu)
@@ -213,10 +225,19 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
 
         ''' Exit button '''
         self.exitAction = QAction('&Exit', self.menu)
-        self.exitAction.triggered.connect(QtGui.qApp.quit)
+        self.exitAction.triggered.connect(self.quit)
         self.menu.addAction(self.exitAction)
 
         self.setContextMenu(self.menu)
+
+    def quit(self):
+        for proc in psutil.process_iter():
+            try:
+                if proc.name() in ('syncthing', 'syncthing.exe'):
+                    proc.kill()
+            except psutil.AccessDenied:
+                continue
+        QtGui.qApp.quit()
 
     def open_syncthing_web(self):
         QDesktopServices.openUrl('http://localhost:8080')
@@ -268,12 +289,12 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         connected_nodes = nodes.keys()
         connected_nodes.remove('total')
 
-        nodes = {node['NodeID']: node['Name'] for node in self.config['Nodes']}
+        nodes = {node['NodeID']: node['Name'] for node in self.syncthing.get_nodes()}
 
         connected_names = [nodes[node] for node in nodes if node in connected_nodes]
 
         stats = self.syncthing.get_node_stats()
-        max_length = max([len(node['Name']) for node in self.config['Nodes']])
+        max_length = max([len(node['Name']) for node in self.syncthing.get_nodes()])
 
         for action in self.nodes.actions():
             name = action.text().split()[0]
@@ -310,13 +331,11 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
             self.update.setText('Up to date')
             self.changelog.setVisible(False)
 
-        
-
     @QtCore.pyqtSlot()
     def handleRecentsMessage(self, recents):
         recents = [recent for recent in recents if recent['type'] == 'LocalIndexUpdated']
         recents = recents[-10:]
-        folders = {repo['ID']: repo['Directory'] for repo in self.config['Repositories']}
+        folders = {repo['ID']: repo['Directory'] for repo in self.syncthing.get_repositories()}
 
         if recents:
             # remove all actions in recents menu
