@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 from __future__ import division
+import logging
 import os
 import sys
 import time
@@ -13,6 +15,15 @@ from syncthing import SyncthingClient
 
 # pip install arrow requests python_qt_binding PySide
 
+logging.basicConfig(filename='syncthing.log',
+                    level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+log = logging.getLogger(__name__)
+
+requests_log = logging.getLogger('requests')
+requests_log.setLevel(logging.WARNING)
+
 class StatusThread(QtCore.QThread):
     '''
     Thread used to update the status of SyncThing
@@ -20,24 +31,24 @@ class StatusThread(QtCore.QThread):
     infoRepoMessage = QtCore.Signal(object)
     statusMessage = QtCore.Signal(object)
     nodesMessage = QtCore.Signal(object)
-    
+
     syncthing = SyncthingClient()
-    config = syncthing.get_config()
 
     def run(self):
+        log.info('Status thread launched')
         while True:
-            repos = [repo['ID'] for repo in self.config['Repositories']]
+            repos = [repo['ID'] for repo in self.syncthing.get_repositories()]
             info_repos = self.get_repos_status(repos)
             self.infoRepoMessage.emit(info_repos)
-            
+
             status = self.get_global_status(info_repos)
             self.statusMessage.emit(status)
-            
+
             nodes = self.get_connected_nodes()
             self.nodesMessage.emit(nodes)
-            
+
             time.sleep(1)
-            
+
     def get_global_status(self, repos):
         status = 0
 
@@ -46,12 +57,12 @@ class StatusThread(QtCore.QThread):
 
         status = status / len(repos)
         status = 'OK' if (status == 100) else 'syncing... (%s%%)' % status
-            
+
         return status
-        
+
     def get_connected_nodes(self):
         return self.syncthing.get_connections()
-        
+
     def get_repos_status(self, repos):
         info_repos = []
 
@@ -59,33 +70,33 @@ class StatusThread(QtCore.QThread):
             repo_info = self.syncthing.get_repo(repo)
             if not repo_info:
                 info_repo = {'name': repo, 'diff': -1}
+                info_repos.append(info_repo)
                 continue
 
-            globalBytes = repo_info['globalBytes'] # if repo['globalBytes'] > 0 else 1
+            globalBytes = repo_info['globalBytes']
             localBytes = repo_info['localBytes']
-
 
             if globalBytes != 0:
                 diff = (localBytes / globalBytes) * 100
             else:
                 diff = 100
-                
+
             diff = int(round(diff))
-            
+
             info_repo = {'name': repo, 'diff': diff}
             info_repos.append(info_repo)
-            
+
         return info_repos
-        
+
 class UpdateThread(QtCore.QThread):
     '''
     Thread used to check if Syncthing needs to be updated
     '''
     updateMessage = QtCore.Signal(object)
-    
+
     syncthing = SyncthingClient()
     config = syncthing.get_config()
-    
+
     def run(self):
         update = self.update_syncthing()
         self.updateMessage.emit(update)
@@ -93,9 +104,9 @@ class UpdateThread(QtCore.QThread):
     def update_syncthing(self):
         version = self.syncthing.get_upgrade()
         if version['newer']:
-            print('INFO: New version available: %s (actually %s)' % (version['latest'], version['running']))
+            log.info('New version available: %s (actually %s)' % (version['latest'], version['running']))
         else:
-            print('INFO: Syncthing is up to date')
+            log.info('Syncthing is up to date')
 
         return version['newer']
 
@@ -109,15 +120,15 @@ class RecentsThread(QtCore.QThread):
     Thread used to update recently updated files
     '''
     recentsMessage = QtCore.Signal(object)
-    
+
     syncthing = SyncthingClient()
     config = syncthing.get_config()
-    
+
     def run(self):
         while True:
             events = self.syncthing.get_events()
             self.recentsMessage.emit(events)
-            
+
             time.sleep(30)
 
 class SystemTrayIcon(QtGui.QSystemTrayIcon):
@@ -126,10 +137,10 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         QtGui.QSystemTrayIcon.__init__(self, icon, parent)
 
         self.syncthing = SyncthingClient()
-        self.config = self.syncthing.syncthing_config
-        
+        self.config = self.syncthing.get_config()
+
         self.menu = QtGui.QMenu(parent)
-        
+
         ''' Threads '''
         # Status
         self.status_thread = StatusThread()
@@ -137,11 +148,11 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.status_thread.statusMessage.connect(self.handleStatusMessage)
         self.status_thread.nodesMessage.connect(self.handleNodesMessage)
         self.status_thread.start()
-        
+
         # Update
         self.update_thread = UpdateThread()
         self.update_thread.updateMessage.connect(self.handleUpdateMessage)
-        
+
         # Recents
         self.recents_thread = RecentsThread()
         self.recents_thread.recentsMessage.connect(self.handleRecentsMessage)
@@ -153,11 +164,11 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.status.setToolTip('Test0')
         self.status.triggered.connect(self.open_syncthing_web)
         self.menu.addAction(self.status)
-        
+
         ''' Folders '''
         self.folders = self.menu.addMenu('Folders')
         self.folders.setIcon(QIcon('icons/folder.png'))
-        folders = {repo['ID']: repo['Directory'] for repo in self.config['Repositories']}
+        folders = {repo['ID']: repo['Directory'] for repo in self.syncthing.get_repositories()}
         for folder in folders:
             item = QAction(folder, self.folders)
             item.triggered.connect(lambda: self.open_dir(folders[folder]))
@@ -170,12 +181,12 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         nodes = {node['NodeID']: node['Name'] for node in self.config['Nodes']}
 
         for node in nodes:
-            if node != self.syncthing.get_system()['myID']:
+            if node != self.syncthing.get_self_id():
                 item = QAction(nodes[node], self.nodes)
                 item.setDisabled(True)
                 item.setIcon(QtGui.QIcon('icons/active.png'))
                 self.nodes.addAction(item)
-                
+
         ''' Recents '''
         self.recents = self.menu.addMenu('Recents')
         self.recents.setIcon(QIcon('icons/recent.png'))
@@ -191,12 +202,12 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.update = QAction('Update', self.menu)
         self.update.triggered.connect(self.update_thread.start)
         self.menu.addAction(self.update)
-        
+
         ''' Restart '''
         self.restart = QAction('Restart', self.menu)
         self.restart.triggered.connect(self.restart_syncthing)
         self.menu.addAction(self.restart)
-        
+
         ''' Separator '''
         self.menu.addSeparator()
 
@@ -204,7 +215,7 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         self.exitAction = QAction('&Exit', self.menu)
         self.exitAction.triggered.connect(QtGui.qApp.quit)
         self.menu.addAction(self.exitAction)
-        
+
         self.setContextMenu(self.menu)
 
     def open_syncthing_web(self):
@@ -212,14 +223,15 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
 
     def restart_syncthing(self):
         if self.syncthing.syncthing_apikey:
-            print('INFO: Restarting Syncthing...')
+            log.info('Restarting Syncthing...')
             self.syncthing.restart()
+            self.config = self.syncthing.get_config()
         else:
             msgBox = QDialog()
             msgBox = QMessageBox().information(self, 'No API key', 'Restart needs API key to be configured.' \
             '\n\nGo to \'Edit\', \'Config\' and generate an API key.')
             self.open_syncthing_web()
-            
+
     def open_dir(self, folder):
         QDesktopServices.openUrl('file:///%s' % folder)
 
@@ -243,8 +255,8 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
             self.status.setText(message)
             self.status.setFont(font)
             self.setToolTip(message)
-            print('INFO: %s' % self.status.text())
-    
+            log.info('%s' % self.status.text())
+
     @QtCore.pyqtSlot()
     def handleNodesMessage(self, nodes):
         '''
@@ -256,15 +268,15 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
         nodes = {node['NodeID']: node['Name'] for node in self.config['Nodes']}
 
         connected_names = [nodes[node] for node in nodes if node in connected_nodes]
-        
+
         stats = self.syncthing.get_node_stats()
         max_length = max([len(node['Name']) for node in self.config['Nodes']])
-        
+
         for action in self.nodes.actions():
             name = action.text().split()[0]
             if name in connected_names:
                 if not action.isEnabled():
-                    print('INFO: Connected to %s' % name)
+                    log.info('Connected to %s' % name)
                     action.setText(name)
                     action.setDisabled(False)
             else:
@@ -278,7 +290,8 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
                 action.setDisabled(True)
 
         if connected_names:
-            self.setToolTip('%s\nConnected to: %s' % (self.status.text(), ', '.join([a.text() for a in self.nodes.actions() if a.text() in connected_names])))
+            names = ', '.join([a.text() for a in self.nodes.actions() if a.text() in connected_names])
+            self.setToolTip('%s\nConnected to: %s' % (self.status.text(), names))
             self.setIcon(QIcon('icons/logo-ok.png'))
         else:
             self.setToolTip(self.status.text())
@@ -288,7 +301,7 @@ class SystemTrayIcon(QtGui.QSystemTrayIcon):
     def handleUpdateMessage(self, update):
         if update:
             self.update.setText('New version available!')
-            self.update.triggered.connect(lambda: self.download_syncthing(version))
+            self.update.triggered.connect(self.open_syncthing_web)
         else:
             self.update.setText('Up to date')
 
