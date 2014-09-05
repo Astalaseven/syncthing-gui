@@ -134,7 +134,7 @@ class RecentsThread(QtCore.QThread):
             events = self.syncthing.get_events()
             self.recentsMessage.emit(events)
 
-            time.sleep(30)
+            time.sleep(10)
 
 class SystemTrayIcon(QtGui.QSystemTrayIcon):
 
